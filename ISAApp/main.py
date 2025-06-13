@@ -152,6 +152,7 @@ class StartScreen(Screen):
         box.add_widget(btn)
         pop = Popup(title="Podaj nazwę badania",
                     content=box, size_hint=(0.8, 0.4), auto_dismiss=False)
+
         def on_ok(_):
             name = ti.text.strip()
             if name:
@@ -168,11 +169,17 @@ class SurveyScreen(Screen):
 
     def start_survey(self, name):
         self.study = name
+        # zapisujemy czas startu
+        self.start_time = datetime.now()
         self.responses = []
+        # OPCJONALNIE: dodajemy pierwszy rekord "START"
+        start_ts = self.start_time.strftime("%Y-%m-%d %H:%M:%S")
+        self.responses.append((start_ts, "START"))
+
         self.ids.lamp.source = self.lamp_off
-        if hasattr(self, 'blink_event'):
-            self.blink_event.cancel()
-        self.blink_event = Clock.schedule_interval(self._trigger_blink, 10)
+        self._cancel_all_timers()
+        # nowy timer co 2 min
+        self.blink_timer = Clock.schedule_interval(self._trigger_blink, 120)
 
     def _trigger_blink(self, dt):
         if has_vibrator and vibrator:
@@ -197,7 +204,7 @@ class SurveyScreen(Screen):
         self.responses.append((ts, score))
         if hasattr(self, 'blink_event2'):
             self.blink_event2.cancel()
-            self.ids.lamp.source = self.lamp_off
+        self.ids.lamp.source = self.lamp_off
 
     def confirm_end(self):
         box = BoxLayout(orientation='vertical', padding=10, spacing=10)
@@ -213,17 +220,27 @@ class SurveyScreen(Screen):
         pop.open()
 
     def end_survey(self):
+        self._cancel_all_timers()
         if not getattr(self, 'responses', []):
             self.manager.current = 'start'
             return
         app = App.get_running_app()
-        filename = f"{self.study}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        # nazwa pliku od start_time
+        fname = self.start_time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.study}_{fname}.csv"
         filepath = os.path.join(app.log_dir, filename)
         with open(filepath, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             for t, s in self.responses:
                 w.writerow([self.study, t, s])
         self.manager.current = 'start'
+
+    def _cancel_all_timers(self):
+        if hasattr(self, 'blink_timer'):
+            self.blink_timer.cancel()
+        if hasattr(self, 'blink_event2'):
+            self.blink_event2.cancel()
+        self.ids.lamp.source = self.lamp_off
 
 class LogsScreen(Screen):
     def load_logs(self):
@@ -254,10 +271,12 @@ class ISAApp(App):
     log_dir = None
 
     def build(self):
-        if platform == 'android' or platform == 'ios':
-            self.log_dir = storagepath.get_documents_dir() or storagepath.get_external_storage_dir()
+        if platform in ('android', 'ios'):
+            base = storagepath.get_documents_dir() or storagepath.get_external_storage_dir()
+            self.log_dir = os.path.join(base, "BADANIA_ISA")
         else:
-            self.log_dir = os.path.join(os.getcwd(), "logs")
+            base = os.path.expanduser("~/Documents")
+            self.log_dir = os.path.join(base, "BADANIA_ISA")
 
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
